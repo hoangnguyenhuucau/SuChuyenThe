@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<title>Mô phỏng Chuyển thể: Tái Kết Tinh Hoàn Hảo</title>
+<style>
+  :root { --solid-color: #3498db; --liquid-color: #e74c3c; --gas-color: #9b59b6; --bg-color: #121212; --panel-bg: #1e1e1e; }
+  body { font-family: 'Segoe UI', sans-serif; background-color: var(--bg-color); color: white; display: flex; flex-direction: column; margin: 0; height: 100vh; overflow: hidden; }
+  #main-layout { display: flex; width: 100%; height: 100%; }
+  #canvas-area { flex: 2; position: relative; background: #000; border-right: 2px solid #333; }
+  canvas { display: block; width: 100%; height: 100%; }
+  #controls-area { flex: 1; background: var(--panel-bg); padding: 20px; display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 350px; }
+  
+  .hud { position: absolute; top: 20px; left: 20px; background: rgba(0, 0, 0, 0.7); padding: 15px; border-radius: 8px; border-left: 5px solid var(--solid-color); pointer-events: none; }
+  .state-title { font-size: 1.8rem; font-weight: bold; margin-bottom: 5px; }
+  .state-desc { font-size: 0.9rem; color: #ccc; max-width: 300px; }
+
+  .triangle-container { position: relative; width: 300px; height: 300px; margin: 20px 0; }
+  .state-btn { position: absolute; width: 80px; height: 80px; border-radius: 50%; border: 3px solid rgba(255,255,255,0.2); color: white; font-weight: bold; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1rem; transition: all 0.3s; z-index: 2; }
+  .state-btn:hover { transform: scale(1.1); box-shadow: 0 0 20px white; }
+  #btn-gas { top: 0; left: 50%; transform: translateX(-50%); background: var(--gas-color); }
+  #btn-solid { bottom: 0; left: 0; background: var(--solid-color); }
+  #btn-liquid { bottom: 0; right: 0; background: var(--liquid-color); }
+
+  .trans-btn { position: absolute; padding: 5px 10px; background: #444; border: 1px solid #666; border-radius: 4px; color: #fff; font-size: 0.75rem; cursor: pointer; transition: 0.2s; z-index: 1; white-space: nowrap; }
+  .trans-btn:hover { background: #fff; color: #000; z-index: 3; }
+  #trans-sublimation { top: 35%; left: 15%; transform: rotate(-60deg); }
+  #trans-deposition { top: 45%; left: 5%; transform: rotate(-60deg); }
+  #trans-vaporization { top: 35%; right: 15%; transform: rotate(60deg); }
+  #trans-condensation { top: 45%; right: 5%; transform: rotate(60deg); }
+  #trans-melting { bottom: 10px; left: 35%; }
+  #trans-freezing { bottom: -25px; left: 35%; }
+
+  .manual-control { width: 100%; margin-top: 20px; }
+  input[type=range] { width: 100%; cursor: pointer; }
+</style>
+</head>
+<body>
+
+<div id="main-layout">
+  <div id="canvas-area">
+    <canvas id="simCanvas"></canvas>
+    <div class="hud" id="hud">
+      <div class="state-title" id="hudTitle">RẮN (Solid)</div>
+      <div class="state-desc" id="hudDesc">Mạng tinh thể ổn định.</div>
+      <div style="margin-top: 10px; font-size: 0.8rem; color: #aaa;">Nhiệt độ: <span id="tempVal">0</span> K</div>
+    </div>
+  </div>
+
+  <div id="controls-area">
+    <h3 style="margin-bottom: 30px;">SƠ ĐỒ CHUYỂN THỂ</h3>
+    <div class="triangle-container">
+      <div id="btn-gas" class="state-btn" onclick="setMode('gas')">KHÍ</div>
+      <div id="btn-solid" class="state-btn" onclick="setMode('solid')">RẮN</div>
+      <div id="btn-liquid" class="state-btn" onclick="setMode('liquid')">LỎNG</div>
+
+      <button id="trans-sublimation" class="trans-btn" onclick="animateTransition('sublimation')">⬆ Thăng hoa</button>
+      <button id="trans-deposition" class="trans-btn" onclick="animateTransition('deposition')">⬇ Ngưng kết</button>
+      <button id="trans-vaporization" class="trans-btn" onclick="animateTransition('vaporization')">⬆ Hóa hơi</button>
+      <button id="trans-condensation" class="trans-btn" onclick="animateTransition('condensation')">⬇ Ngưng tụ</button>
+      <button id="trans-melting" class="trans-btn" onclick="animateTransition('melting')">➡ Nóng chảy</button>
+      <button id="trans-freezing" class="trans-btn" onclick="animateTransition('freezing')">⬅ Đông đặc</button>
+    </div>
+
+    <div class="manual-control">
+      <label style="font-size:0.8rem; color:#888;">Nhiệt độ (0% = Lạnh tuyệt đối | 100% = Sôi)</label>
+      <input type="range" id="tempSlider" min="0" max="100" value="0">
+    </div>
+  </div>
+</div>
+
+<script>
+  const canvas = document.getElementById('simCanvas');
+  const ctx = canvas.getContext('2d');
+  function resize() { canvas.width = canvas.parentElement.offsetWidth; canvas.height = canvas.parentElement.offsetHeight; if(particles.length===0) initParticles(); }
+  window.addEventListener('resize', resize);
+
+  const particles = [];
+  const numParticles = 240; 
+  const pRadius = 5;
+  
+  let targetTemp = 0;         
+  let currentTemp = 0;
+  let targetLatticeStr = 1.0;
+  let currentLatticeStr = 1.0;
+  
+  // Khoảng cách chuẩn giữa các hạt trong lưới
+  const GRID_SPACING = 22; 
+
+  class Particle {
+    constructor(x, y) {
+      this.x = x; this.y = y;
+      this.vx = 0; this.vy = 0;
+      this.originX = x; this.originY = y;
+      this.state = 'solid'; 
+      this.color = '#3498db';
+    }
+  }
+
+  function initParticles() {
+    particles.length = 0;
+    const cols = 24; const rows = 10;
+    const startX = (canvas.width - cols * GRID_SPACING) / 2 + GRID_SPACING/2;
+    const startY = canvas.height - (rows * GRID_SPACING) - 50; 
+
+    for (let i = 0; i < numParticles; i++) {
+      let c = i % cols; let r = Math.floor(i / cols);
+      let tx = startX + c * GRID_SPACING; if (r % 2 !== 0) tx += GRID_SPACING/2;
+      let ty = startY + r * GRID_SPACING;
+      particles.push(new Particle(tx, ty));
+    }
+  }
+
+  function update() {
+    currentTemp += (targetTemp - currentTemp) * 0.05;
+    currentLatticeStr += (targetLatticeStr - currentLatticeStr) * 0.05;
+    
+    document.getElementById('tempVal').innerText = Math.floor(currentTemp * 10);
+    document.getElementById('tempSlider').value = targetTemp;
+
+    particles.forEach(p => {
+        // --- QUYẾT ĐỊNH TRẠNG THÁI ---
+        // Logic chuyển thể (State Transition)
+        if (targetTemp >= 80) {
+            if (p.state === 'liquid' && Math.random() < 0.02) { 
+                p.state = 'gas'; p.vy = -3; 
+            }
+            if (p.state === 'solid' && Math.random() < 0.01) p.state = 'gas';
+        } else {
+             if (p.state === 'gas' && Math.random() < 0.05) p.state = 'liquid';
+             if (targetTemp < 20 && p.state === 'liquid') p.state = 'solid';
+        }
+        
+        // Cưỡng bức trạng thái theo Lattice Strength (để đồng bộ với nút bấm)
+        if (currentLatticeStr > 0.8) p.state = 'solid';
+        if (currentLatticeStr < 0.2 && targetTemp < 80 && p.state !== 'gas') p.state = 'liquid';
+
+        // --- VẬT LÝ ---
+        // 1. Rung động
+        let vibration = currentTemp * 0.02;
+        if (p.state === 'liquid') vibration = 0.05; 
+        p.vx += (Math.random() - 0.5) * vibration;
+        p.vy += (Math.random() - 0.5) * vibration;
+
+        // 2. Xử lý theo trạng thái
+        if (p.state === 'solid') {
+            // LỰC HỒI QUY (VỀ VỊ TRÍ CŨ)
+            // Đây là chìa khóa để sửa lỗi của bạn
+            if (currentLatticeStr > 0.1) {
+                const dx = p.originX - p.x;
+                const dy = p.originY - p.y;
+                // Kéo về vị trí gốc mạnh hơn
+                const k = 0.1 * currentLatticeStr;
+                p.vx += dx * k; p.vy += dy * k;
+                
+                // Ma sát cực lớn (Damping) để không bị văng quá đà
+                p.vx *= 0.75; p.vy *= 0.75;
+            }
+            p.color = '#3498db';
+
+        } else if (p.state === 'liquid') {
+            p.vy += 0.5; // Trọng lực
+            // Giới hạn tốc độ (để không bị nhanh)
+            const maxSpeed = 1.5;
+            p.vx = Math.max(-maxSpeed, Math.min(maxSpeed, p.vx));
+            p.vy = Math.max(-maxSpeed, Math.min(maxSpeed, p.vy));
+            p.vx *= 0.98; p.vy *= 0.98;
+            p.color = '#e74c3c';
+
+        } else if (p.state === 'gas') {
+            p.vy -= 0.05; // Bay lên
+            p.vx *= 0.995; p.vy *= 0.995; 
+            p.color = '#9b59b6';
+        }
+
+        // 3. TƯƠNG TÁC (VA CHẠM)
+        // SỬA LỖI QUAN TRỌNG: 
+        // Khi đang tái kết tinh (về Rắn), TẮT va chạm đẩy nhau để chúng không bị kẹt
+        // Chỉ bật va chạm đẩy nhau khi ở thể Lỏng hoặc Khí, hoặc Rắn đã ổn định
+        let enableRepulsion = true;
+        if (p.state === 'solid' && currentLatticeStr > 0.5) {
+            // Nếu đang rắn và khá ổn định, tắt đẩy nhau để chúng nằm im tại chỗ
+            // Tránh hiện tượng hạt này đẩy hạt kia lệch khỏi lưới
+            enableRepulsion = false; 
+        }
+
+        if (enableRepulsion) {
+            particles.forEach(other => {
+                if (p === other) return;
+                const dx = p.x - other.x; const dy = p.y - other.y;
+                const distSq = dx*dx + dy*dy;
+                const minDist = pRadius * 2; 
+                
+                if (distSq < minDist * minDist) {
+                    const dist = Math.sqrt(distSq);
+                    const force = (minDist - dist) * 0.4;
+                    const angle = Math.atan2(dy, dx);
+                    
+                    p.vx += Math.cos(angle) * force;
+                    p.vy += Math.sin(angle) * force;
+                    
+                    if (p.state === 'liquid') p.vx += (Math.random()-0.5)*0.1;
+                }
+            });
+        }
+
+        // 4. Cập nhật vị trí
+        p.x += p.vx; p.y += p.vy;
+
+        // 5. Tường
+        const damping = 0.5;
+        if (p.x < pRadius) { p.x = pRadius; p.vx *= -damping; }
+        if (p.x > canvas.width - pRadius) { p.x = canvas.width - pRadius; p.vx *= -damping; }
+        if (p.y > canvas.height - pRadius) { 
+             p.y = canvas.height - pRadius; 
+             p.vy *= -damping; p.vx *= 0.9;
+        }
+        if (p.y < pRadius) { p.y = pRadius; p.vy *= -damping; }
+    });
+  }
+
+  function draw() {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.3)'; 
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // 1. VẼ LIÊN KẾT (SỬA LỖI VẼ DÂY LẰNG NHẰNG)
+    // Chỉ vẽ dây nối nếu 2 hạt THỰC SỰ ở gần nhau
+    if (currentLatticeStr > 0.2) {
+        ctx.strokeStyle = `rgba(255,255,255, ${currentLatticeStr * 0.2})`;
+        ctx.beginPath();
+        
+        // Thuật toán tối ưu: Chỉ kiểm tra hạt lân cận trong khoảng cách nhất định
+        for (let i = 0; i < particles.length; i++) {
+            let p = particles[i];
+            if (p.state !== 'solid') continue;
+
+            // Chỉ nối với hạt khác nếu khoảng cách < 1.5 lần khoảng cách lưới
+            // Điều này loại bỏ hoàn toàn các đường kẻ ngang màn hình
+            for (let j = i + 1; j < particles.length; j++) {
+                 let other = particles[j];
+                 if (other.state !== 'solid') continue;
+
+                 const dx = p.x - other.x;
+                 const dy = p.y - other.y;
+                 // 35px là ngưỡng, nếu xa hơn thì không vẽ dây
+                 if (Math.abs(dx) < 35 && Math.abs(dy) < 35) {
+                     ctx.moveTo(p.x, p.y); 
+                     ctx.lineTo(other.x, other.y);
+                 }
+            }
+        }
+        ctx.stroke();
+    }
+
+    // 2. VẼ HẠT
+    particles.forEach(p => {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, pRadius, 0, Math.PI*2);
+      ctx.fillStyle = p.color;
+      if (p.state === 'gas') { ctx.shadowBlur = 10; ctx.shadowColor = p.color; } 
+      else { ctx.shadowBlur = 0; }
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    });
+
+    update();
+    requestAnimationFrame(draw);
+  }
+
+  // --- CONTROLS ---
+  const hudTitle = document.getElementById('hudTitle');
+  const hudDesc = document.getElementById('hudDesc');
+  const hud = document.getElementById('hud');
+
+  const MODES = {
+      'solid': { temp: 0, lattice: 1.0, title: "RẮN", desc: "Trật tự, dao động nhẹ", color: "#3498db" },
+      'liquid': { temp: 50, lattice: 0.0, title: "LỎNG", desc: "Trượt lên nhau, không bay hơi", color: "#e74c3c" },
+      'gas': { temp: 100, lattice: 0.0, title: "KHÍ", desc: "Bay tự do", color: "#9b59b6" }
+  };
+
+  function setMode(mode) {
+      const m = MODES[mode];
+      targetTemp = m.temp;
+      targetLatticeStr = m.lattice;
+      updateUI(m.title, m.desc, m.color);
+  }
+  
+  function updateUI(title, desc, color) {
+      hudTitle.innerText = title; hudDesc.innerText = desc;
+      hudTitle.style.color = color; hud.style.borderLeftColor = color;
+  }
+
+  function animateTransition(type) {
+      switch(type) {
+          case 'melting': targetTemp=50; targetLatticeStr=0; updateUI("NÓNG CHẢY", "Rắn -> Lỏng", "#f1c40f"); break;
+          case 'freezing': targetTemp=0; targetLatticeStr=1; updateUI("ĐÔNG ĐẶC", "Lỏng -> Rắn", "#3498db"); break;
+          case 'vaporization': targetTemp=100; targetLatticeStr=0; updateUI("HÓA HƠI", "Sôi từ từ...", "#9b59b6"); break;
+          case 'condensation': targetTemp=50; targetLatticeStr=0; updateUI("NGƯNG TỤ", "Khí -> Lỏng", "#e74c3c"); break;
+          case 'sublimation': targetTemp=100; targetLatticeStr=0; updateUI("THĂNG HOA", "Bay hơi ngay lập tức", "#e056fd"); break;
+          case 'deposition': targetTemp=0; targetLatticeStr=1; updateUI("NGƯNG KẾT", "Khí -> Rắn", "#badc58"); break;
+      }
+  }
+
+  document.getElementById('tempSlider').addEventListener('input', (e) => {
+      targetTemp = parseInt(e.target.value);
+      if(targetTemp < 30) targetLatticeStr = 1;
+      else targetLatticeStr = 0;
+  });
+
+  resize(); initParticles(); draw();
+</script>
+</body>
+</html>
